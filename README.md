@@ -64,17 +64,55 @@ You can also import the collection into the Postman app and run it with the Coll
 
 Workflow `.github/workflows/newman.yml` — **Any Name API regression (Newman)**.
 
-- **Triggers:** a push to `main` that changes `collections/**` or the workflow file, and a manual
-  run (Actions → *Any Name API regression (Newman)* → *Run workflow*).
+- **Triggers:**
+
+  | Trigger | Jira gate | Regression |
+  |---|---|---|
+  | push to `main` changing `collections/**`, `.github/scripts/**` or the workflow | no | always |
+  | manual run (Actions → *Any Name API regression (Newman)* → *Run workflow*) | no | always |
+  | manual run with **`jira_gate`** ticked | yes | only if tickets are found |
+  | **schedule**: every Monday at 07:00 UTC (`0 7 * * 1`) | yes | only if tickets are found |
+
+- **Jira gate** (`jira-gate` job, script `.github/scripts/jira-gate.sh`) runs before Newman:
+  1. Fails if the `JIRA_EMAIL` or `JIRA_API_TOKEN` secret is missing, so a scheduled run never
+     skips silently.
+  2. Checks the login with `GET /rest/api/3/myself` and fails unless it returns a real, active user
+     account matching `JIRA_EMAIL`. This is needed because Jira Cloud answers searches anonymously
+     (HTTP 200, 0 tickets).
+  3. Searches `labels = "api-regression" AND status = "Ready for QA"` with
+     `POST /rest/api/3/search/jql` on `https://julykotsur.atlassian.net`.
+  4. Writes the tickets found, with links, to the run summary. With 0 tickets, Newman and Pages are
+     skipped and the run stays green.
+- **Secrets** (Settings → Secrets and variables → Actions):
+  - `JIRA_EMAIL`: email of the Atlassian account that owns the API token
+  - `JIRA_API_TOKEN`: an API token without scopes, created at
+    <https://id.atlassian.com/manage-profile/security/api-tokens>
+
+  ```bash
+  gh secret set JIRA_EMAIL --repo julykotsur-alt/any-name
+  ```
+
+  ```bash
+  gh secret set JIRA_API_TOKEN --repo julykotsur-alt/any-name
+  ```
+
+  `gh` prompts for the value, so it does not end up in shell history.
+
+  To test the gate by hand: Actions → *Run workflow* → tick **jira_gate**, or run
+  `gh workflow run newman.yml -f jira_gate=true`.
+
+  GitHub pauses scheduled workflows in public repositories after 60 days without repository
+  activity; re-enable the workflow in the Actions tab if that happens.
 - **Runs:** Node 20, `newman@6` with the `cli`, `json` and `htmlextra` reporters
   (`newman-reporter-htmlextra@1`).
 - **Artifacts** (kept 14 days, uploaded even when assertions fail):
   - `newman-report`: JSON report (`results/newman-report.json`)
   - `newman-html-report`: HTML report (`reports/index.html`)
-- **GitHub Pages:** on `main`, the separate `deploy-report` job publishes the latest HTML report to
-  <https://julykotsur-alt.github.io/any-name/> with `actions/deploy-pages`. It also publishes the
-  report when assertions fail, so failures can be inspected. Manual runs on other branches only
-  upload artifacts.
+- **GitHub Pages:** on `main`, the separate `publish-report` job publishes the latest HTML report to
+  <https://julykotsur-alt.github.io/any-name/> with `actions/deploy-pages`. It runs only when Newman
+  actually ran, including when assertions fail, so failures can be inspected. It does not run when
+  Newman was skipped by the Jira gate or never started. Manual runs on other branches only upload
+  artifacts.
   Pages must use the **GitHub Actions** source (Settings → Pages → Build and deployment).
 
 The job fails when any assertion fails. The HTML report is still published.
@@ -85,7 +123,8 @@ The job fails when any assertion fails. The HTML report is still published.
 ## Layout
 
 ```
-.github/workflows/newman.yml   CI workflow (Newman run, artifacts, GitHub Pages)
+.github/workflows/newman.yml   CI workflow (Jira gate, Newman run, artifacts, GitHub Pages)
+.github/scripts/jira-gate.sh   Jira gate: login check and ticket search
 collections/                   Postman collection
 results/                       JSON run results (git-ignored, folder kept with .gitkeep)
 reports/                       HTML reports (git-ignored, folder kept with .gitkeep)
