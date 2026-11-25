@@ -43,13 +43,13 @@ the name, category, tags, photo URL and status. Nothing is hard-coded, so runs d
 newman run collections/petstore-collection.json
 ```
 
-With a JSON results file and an HTML report (needs `npm install -g newman-reporter-htmlextra`):
+With a JSON results file and an HTML report (needs `npm install -g newman-reporter-htmlextra@1`):
 
 ```bash
 newman run collections/petstore-collection.json \
   -r cli,json,htmlextra \
-  --reporter-json-export results/petstore-results.json \
-  --reporter-htmlextra-export reports/petstore-report.html
+  --reporter-json-export results/newman-report.json \
+  --reporter-htmlextra-export reports/index.html
 ```
 
 To test another server (for example a local Petstore), override the base URL:
@@ -60,10 +60,33 @@ newman run collections/petstore-collection.json --env-var baseUrl=http://localho
 
 You can also import the collection into the Postman app and run it with the Collection Runner.
 
+## CI: GitHub Actions
+
+Workflow `.github/workflows/newman.yml` — **Any Name API regression (Newman)**.
+
+- **Triggers:** a push to `main` that changes `collections/**` or the workflow file, and a manual
+  run (Actions → *Any Name API regression (Newman)* → *Run workflow*).
+- **Runs:** Node 20, `newman@6` with the `cli`, `json` and `htmlextra` reporters
+  (`newman-reporter-htmlextra@1`).
+- **Artifacts** (kept 14 days, uploaded even when assertions fail):
+  - `newman-report`: JSON report (`results/newman-report.json`)
+  - `newman-html-report`: HTML report (`reports/index.html`)
+- **GitHub Pages:** on `main`, the separate `deploy-report` job publishes the latest HTML report to
+  <https://julykotsur-alt.github.io/any-name/> with `actions/deploy-pages`. It also publishes the
+  report when assertions fail, so failures can be inspected. Manual runs on other branches only
+  upload artifacts.
+  Pages must use the **GitHub Actions** source (Settings → Pages → Build and deployment).
+
+The job fails when any assertion fails. The HTML report is still published.
+
+> The published report is public and includes request and response bodies. This collection only
+> talks to the public Petstore with generated data; do not add secrets to it.
+
 ## Layout
 
 ```
-collections/   Postman collection
-results/       raw run results (git-ignored, folder kept with .gitkeep)
-reports/       generated reports (git-ignored, folder kept with .gitkeep)
+.github/workflows/newman.yml   CI workflow (Newman run, artifacts, GitHub Pages)
+collections/                   Postman collection
+results/                       JSON run results (git-ignored, folder kept with .gitkeep)
+reports/                       HTML reports (git-ignored, folder kept with .gitkeep)
 ```
