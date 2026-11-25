@@ -1,0 +1,453 @@
+{
+  "info": {
+    "name": "Petstore v3 – Pet CRUD regression",
+    "description": "API regression for the public Swagger Petstore (OpenAPI 3, https://petstore3.swagger.io/api/v3/openapi.json).\n\nFlow: Create pet → Get → Update → Get → Delete → Verify deletion. Each run generates a unique pet and deletes it at the end.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Pet schema from the OpenAPI spec (components.schemas.Pet), used by every response check.",
+          "// Server-generated responses must also contain \"id\".",
+          "const categoryOrTag = {",
+          "  type: 'object',",
+          "  properties: { id: { type: 'integer' }, name: { type: 'string' } }",
+          "};",
+          "const petSchema = {",
+          "  type: 'object',",
+          "  required: ['id', 'name', 'photoUrls'],",
+          "  properties: {",
+          "    id: { type: 'integer' },",
+          "    name: { type: 'string' },",
+          "    category: categoryOrTag,",
+          "    photoUrls: { type: 'array', items: { type: 'string' } },",
+          "    tags: { type: 'array', items: categoryOrTag },",
+          "    status: { type: 'string', enum: ['available', 'pending', 'sold'] }",
+          "  }",
+          "};",
+          "pm.collectionVariables.set('petSchema', JSON.stringify(petSchema));"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://petstore3.swagger.io/api/v3",
+      "type": "string"
+    },
+    {
+      "key": "petId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "createdPet",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "updatedPet",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "requestBody",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "petSchema",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Create pet",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Unique test data for every run: no fixed ids or names.",
+              "const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;",
+              "const uid = pm.variables.replaceIn('{{$guid}}');",
+              "// Date.now() * 1000 + 3 random digits: unique per run and still a safe JS integer (< 2^53).",
+              "const petId = Date.now() * 1000 + rand(0, 999);",
+              "const statuses = ['available', 'pending', 'sold'];",
+              "",
+              "const pet = {",
+              "  id: petId,",
+              "  name: `regress-pet-${uid}`,",
+              "  category: { id: rand(1, 1e6), name: `category-${uid.slice(0, 8)}` },",
+              "  photoUrls: [`https://example.com/photos/${uid}.png`],",
+              "  tags: [{ id: rand(1, 1e6), name: `tag-${uid.slice(0, 8)}` }],",
+              "  status: statuses[rand(0, statuses.length - 1)]",
+              "};",
+              "",
+              "pm.collectionVariables.set('petId', String(petId));",
+              "pm.collectionVariables.set('createdPet', JSON.stringify(pet));",
+              "pm.collectionVariables.set('requestBody', JSON.stringify(pet));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200 (POST /pet: Successful operation)', () => {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "const petSchema = JSON.parse(pm.collectionVariables.get('petSchema'));",
+              "",
+              "pm.test('Content-Type is application/json', () => {",
+              "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+              "});",
+              "",
+              "pm.test('Response matches Pet schema', () => {",
+              "  pm.response.to.have.jsonSchema(petSchema);",
+              "});",
+              "",
+              "pm.test('Response echoes the created pet', () => {",
+              "  const expected = JSON.parse(pm.collectionVariables.get('createdPet'));",
+              "  pm.expect(pm.response.json()).to.deep.equal(expected);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/pet",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "pet"
+          ]
+        },
+        "description": "POST /pet: adds a new pet with unique generated data.",
+        "body": {
+          "mode": "raw",
+          "raw": "{{requestBody}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "2. Get created pet",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200 (GET /pet/{petId}: successful operation)', () => {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "const petSchema = JSON.parse(pm.collectionVariables.get('petSchema'));",
+              "",
+              "pm.test('Content-Type is application/json', () => {",
+              "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+              "});",
+              "",
+              "pm.test('Response matches Pet schema', () => {",
+              "  pm.response.to.have.jsonSchema(petSchema);",
+              "});",
+              "",
+              "pm.test('Stored pet equals the created pet', () => {",
+              "  const expected = JSON.parse(pm.collectionVariables.get('createdPet'));",
+              "  pm.expect(pm.response.json()).to.deep.equal(expected);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/pet/{{petId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "pet",
+            "{{petId}}"
+          ]
+        },
+        "description": "GET /pet/{petId}: the created pet is stored as sent."
+      },
+      "response": []
+    },
+    {
+      "name": "3. Update pet",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const created = JSON.parse(pm.collectionVariables.get('createdPet'));",
+              "const uid = pm.variables.replaceIn('{{$guid}}');",
+              "const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;",
+              "// Pick a status that differs from the current one, so the change is observable.",
+              "const otherStatuses = ['available', 'pending', 'sold'].filter(s => s !== created.status);",
+              "",
+              "const updated = {",
+              "  id: created.id,",
+              "  name: `regress-pet-updated-${uid}`,",
+              "  category: { id: rand(1, 1e6), name: `category-upd-${uid.slice(0, 8)}` },",
+              "  photoUrls: [`https://example.com/photos/${uid}-updated.png`],",
+              "  tags: [{ id: rand(1, 1e6), name: `tag-upd-${uid.slice(0, 8)}` }],",
+              "  status: otherStatuses[rand(0, otherStatuses.length - 1)]",
+              "};",
+              "",
+              "pm.collectionVariables.set('updatedPet', JSON.stringify(updated));",
+              "pm.collectionVariables.set('requestBody', JSON.stringify(updated));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200 (PUT /pet: Successful operation)', () => {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "const petSchema = JSON.parse(pm.collectionVariables.get('petSchema'));",
+              "",
+              "pm.test('Content-Type is application/json', () => {",
+              "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+              "});",
+              "",
+              "pm.test('Response matches Pet schema', () => {",
+              "  pm.response.to.have.jsonSchema(petSchema);",
+              "});",
+              "",
+              "pm.test('Response echoes the updated pet', () => {",
+              "  const expected = JSON.parse(pm.collectionVariables.get('updatedPet'));",
+              "  pm.expect(pm.response.json()).to.deep.equal(expected);",
+              "});",
+              "",
+              "pm.test('Id unchanged, name and status changed', () => {",
+              "  const created = JSON.parse(pm.collectionVariables.get('createdPet'));",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.id).to.eql(created.id);",
+              "  pm.expect(body.name).to.not.eql(created.name);",
+              "  pm.expect(body.status).to.not.eql(created.status);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/pet",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "pet"
+          ]
+        },
+        "description": "PUT /pet: updates name, category, photo, tags and status.",
+        "body": {
+          "mode": "raw",
+          "raw": "{{requestBody}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "4. Get updated pet",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200 (GET /pet/{petId}: successful operation)', () => {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "const petSchema = JSON.parse(pm.collectionVariables.get('petSchema'));",
+              "",
+              "pm.test('Content-Type is application/json', () => {",
+              "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+              "});",
+              "",
+              "pm.test('Response matches Pet schema', () => {",
+              "  pm.response.to.have.jsonSchema(petSchema);",
+              "});",
+              "",
+              "pm.test('Stored pet equals the updated pet (update persisted)', () => {",
+              "  const expected = JSON.parse(pm.collectionVariables.get('updatedPet'));",
+              "  pm.expect(pm.response.json()).to.deep.equal(expected);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/pet/{{petId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "pet",
+            "{{petId}}"
+          ]
+        },
+        "description": "GET /pet/{petId}: the update is persisted."
+      },
+      "response": []
+    },
+    {
+      "name": "5. Delete pet",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200 (DELETE /pet/{petId}: Pet deleted)', () => {",
+              "  pm.response.to.have.status(200);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/pet/{{petId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "pet",
+            "{{petId}}"
+          ]
+        },
+        "description": "DELETE /pet/{petId}: removes the test pet (cleanup)."
+      },
+      "response": []
+    },
+    {
+      "name": "6. Verify deletion",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 404 (GET /pet/{petId}: Pet not found)', () => {",
+              "  pm.response.to.have.status(404);",
+              "});",
+              "",
+              "pm.test('Response says the pet is not found', () => {",
+              "  pm.expect(pm.response.text().toLowerCase()).to.include('not found');",
+              "});",
+              "",
+              "// Safety net: if the pet still exists, delete it so the run never leaves data behind.",
+              "if (pm.response.code === 200) {",
+              "  pm.sendRequest({",
+              "    url: `${pm.collectionVariables.get('baseUrl')}/pet/${pm.collectionVariables.get('petId')}`,",
+              "    method: 'DELETE'",
+              "  }, (err, res) => {",
+              "    console.log('Fallback cleanup:', err ? err.message : res.code);",
+              "  });",
+              "}",
+              "",
+              "// Clear run data so nothing from this run is reused by the next one.",
+              "['petId', 'createdPet', 'updatedPet', 'requestBody'].forEach(k => pm.collectionVariables.set(k, ''));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/pet/{{petId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "pet",
+            "{{petId}}"
+          ]
+        },
+        "description": "GET /pet/{petId}: returns 404 after deletion. Deletes the pet again if it still exists."
+      },
+      "response": []
+    }
+  ]
+}
