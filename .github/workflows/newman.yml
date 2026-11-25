@@ -27,6 +27,10 @@ concurrency:
 env:
   JIRA_BASE_URL: https://julykotsur.atlassian.net
   JIRA_JQL: labels = "api-regression" AND status = "Ready for QA" ORDER BY key ASC
+  # After a gated run that passed, tickets still in EXPECTED_STATUS move to TARGET_STATUS.
+  JIRA_EXPECTED_STATUS: Ready for QA
+  JIRA_TARGET_STATUS: Done
+  PAGES_URL: https://julykotsur-alt.github.io/any-name/
 
 jobs:
   jira-gate:
@@ -38,6 +42,7 @@ jobs:
     outputs:
       run_regression: ${{ steps.gate.outputs.run_regression }}
       ticket_count: ${{ steps.gate.outputs.ticket_count }}
+      ticket_keys: ${{ steps.gate.outputs.ticket_keys }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -145,3 +150,40 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+
+  jira-update:
+    name: Update Jira tickets (comment; Done if passed)
+    needs: [jira-gate, newman]
+    # Only for gated runs (schedule / jira_gate) where Newman really ran, passed or failed.
+    # The script moves tickets only when nothing failed; otherwise it just comments.
+    if: >-
+      !cancelled() &&
+      needs.jira-gate.result == 'success' &&
+      needs.jira-gate.outputs.run_regression == 'true' &&
+      needs.newman.outputs.newman_ran == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Download Newman JSON report
+        uses: actions/download-artifact@v8
+        with:
+          name: newman-report
+          path: results
+
+      - name: Comment on tickets and move passed ones
+        env:
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          TICKET_KEYS: ${{ needs.jira-gate.outputs.ticket_keys }}
+          NEWMAN_REPORT: results/newman-report.json
+          TARGET_STATUS: ${{ env.JIRA_TARGET_STATUS }}
+          EXPECTED_STATUS: ${{ env.JIRA_EXPECTED_STATUS }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # Pages is only updated from main; other branches link to the run's artifacts.
+          REPORT_URL: ${{ github.ref == 'refs/heads/main' && env.PAGES_URL || '' }}
+          GIT_REF: ${{ github.ref_name }}
+          GIT_SHA: ${{ github.sha }}
+        run: bash .github/scripts/jira-transition.sh

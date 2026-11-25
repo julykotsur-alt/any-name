@@ -83,6 +83,18 @@ Workflow `.github/workflows/newman.yml` — **Any Name API regression (Newman)**
      `POST /rest/api/3/search/jql` on `https://julykotsur.atlassian.net`.
   4. Writes the tickets found, with links, to the run summary. With 0 tickets, Newman and Pages are
      skipped and the run stays green.
+- **Jira update** (`jira-update` job, script `.github/scripts/jira-transition.sh`) runs after Newman,
+  only for gated runs (schedule or `jira_gate`) where Newman actually ran. For every ticket the
+  gate found:
+  - **PASSED** (Newman JSON report: assertions ran, 0 failed requests, test scripts, assertions or
+    run errors): moves the ticket **Ready for QA → Done**, but only if it is still in Ready for QA.
+    The transition is found by target status name, not by a fixed id.
+  - **FAILED**: does not change the status.
+  - Either way, it adds a comment with the result, the requests / test-scripts / assertions table
+    (executed and failed), and links to the run and, on `main`, the HTML report.
+  - It lists what it did per ticket in the run summary, and fails if a transition or comment fails.
+
+  To change the statuses, edit `JIRA_EXPECTED_STATUS` / `JIRA_TARGET_STATUS` in the workflow.
 - **Secrets** (Settings → Secrets and variables → Actions):
   - `JIRA_EMAIL`: email of the Atlassian account that owns the API token
   - `JIRA_API_TOKEN`: an API token without scopes, created at
@@ -124,7 +136,9 @@ The job fails when any assertion fails. The HTML report is still published.
 
 ```
 .github/workflows/newman.yml   CI workflow (Jira gate, Newman run, artifacts, GitHub Pages)
+.github/scripts/jira-lib.sh    shared Jira helpers (login check, API calls)
 .github/scripts/jira-gate.sh   Jira gate: login check and ticket search
+.github/scripts/jira-transition.sh  Jira update: comment and move passed tickets to Done
 collections/                   Postman collection
 results/                       JSON run results (git-ignored, folder kept with .gitkeep)
 reports/                       HTML reports (git-ignored, folder kept with .gitkeep)
