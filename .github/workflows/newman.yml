@@ -20,6 +20,8 @@ jobs:
     name: Petstore pet CRUD regression
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      report_ready: ${{ steps.report.outputs.ready }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -29,15 +31,29 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install Newman 6
-        run: npm install -g newman@6
+      - name: Install Newman 6 and htmlextra reporter
+        run: npm install -g newman@6 newman-reporter-htmlextra@1
 
       - name: Run Petstore collection
         run: |
-          mkdir -p results
+          mkdir -p results reports
           newman run collections/petstore-collection.json \
-            --reporters cli,json \
-            --reporter-json-export results/newman-report.json
+            --reporters cli,json,htmlextra \
+            --reporter-json-export results/newman-report.json \
+            --reporter-htmlextra-export reports/index.html \
+            --reporter-htmlextra-title "Any Name API regression (Newman)" \
+            --reporter-htmlextra-browserTitle "Any Name API regression"
+
+      - name: Check that the HTML report exists
+        id: report
+        if: always()
+        run: |
+          if [ -f reports/index.html ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::HTML report was not generated"
+          fi
 
       - name: Upload Newman JSON report
         if: always()
@@ -47,3 +63,39 @@ jobs:
           path: results/newman-report.json
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Upload Newman HTML report
+        if: always() && steps.report.outputs.ready == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: newman-html-report
+          path: reports/index.html
+          retention-days: 14
+
+      # Pages artifact is prepared even when assertions fail, but only on main.
+      - name: Prepare GitHub Pages artifact
+        if: always() && github.ref == 'refs/heads/main' && steps.report.outputs.ready == 'true'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: reports/
+
+  deploy-report:
+    name: Publish HTML report to GitHub Pages
+    needs: newman
+    # Runs after failed assertions too; skipped off main or when no report exists.
+    if: always() && github.ref == 'refs/heads/main' && needs.newman.outputs.report_ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
