@@ -6,7 +6,16 @@ on:
     paths:
       - "collections/**"
       - ".github/workflows/newman.yml"
+      - ".github/scripts/**"
+  # Weekly regression: Mondays 07:00 UTC. Runs only if the Jira gate finds tickets.
+  schedule:
+    - cron: "0 7 * * 1"
   workflow_dispatch:
+    inputs:
+      jira_gate:
+        description: "Check Jira first (run only if Ready for QA tickets with label api-regression exist)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -15,12 +24,44 @@ concurrency:
   group: newman-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  JIRA_BASE_URL: https://julykotsur.atlassian.net
+  JIRA_JQL: labels = "api-regression" AND status = "Ready for QA" ORDER BY key ASC
+
 jobs:
+  jira-gate:
+    name: Jira gate (Ready for QA, api-regression)
+    # Scheduled runs always use the gate; manual runs only with jira_gate = true.
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.jira_gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run_regression: ${{ steps.gate.outputs.run_regression }}
+      ticket_count: ${{ steps.gate.outputs.ticket_count }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      # Fails (not skips) when secrets are missing or the Jira login is not real.
+      - name: Verify Jira login and search tickets
+        id: gate
+        env:
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: bash .github/scripts/jira-gate.sh
+
   newman:
     name: Petstore pet CRUD regression
+    needs: jira-gate
+    # Gate skipped (push / plain manual run) -> run. Gate ran -> run only if it passed and found tickets.
+    if: >-
+      !cancelled() &&
+      (needs.jira-gate.result == 'skipped' ||
+      (needs.jira-gate.result == 'success' && needs.jira-gate.outputs.run_regression == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
+      newman_ran: ${{ steps.newman.outcome == 'success' || steps.newman.outcome == 'failure' }}
       report_ready: ${{ steps.report.outputs.ready }}
     steps:
       - name: Check out repository
@@ -35,6 +76,7 @@ jobs:
         run: npm install -g newman@6 newman-reporter-htmlextra@1
 
       - name: Run Petstore collection
+        id: newman
         run: |
           mkdir -p results reports
           newman run collections/petstore-collection.json \
@@ -79,11 +121,15 @@ jobs:
         with:
           path: reports/
 
-  deploy-report:
+  publish-report:
     name: Publish HTML report to GitHub Pages
     needs: newman
-    # Runs after failed assertions too; skipped off main or when no report exists.
-    if: always() && github.ref == 'refs/heads/main' && needs.newman.outputs.report_ready == 'true'
+    # Only when Newman really ran (passed or failed assertions), on main, with a report.
+    if: >-
+      !cancelled() &&
+      github.ref == 'refs/heads/main' &&
+      needs.newman.outputs.newman_ran == 'true' &&
+      needs.newman.outputs.report_ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
